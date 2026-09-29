@@ -287,6 +287,18 @@ class H3RecipeLoader:
                     "tooltip": "Strength emitted when the recipe says a turbo "
                                "LoRA SHOULD be used. Emits 0.0 when it says "
                                "not to, which disables a LoraLoader inline."}),
+                # ref2va V2V (reference-driven video-to-video identity swap) is
+                # broken by turbo LoRAs: the swap degrades into a slideshow of
+                # the reference, cycling between source and reference, or no
+                # transfer at all. Turning the turbo LoRA off fixes it. The
+                # sidecar's use_turbo_lora is about STEP COUNT, so it cannot
+                # know which task you are running — hence this switch.
+                "task": (["t2v / i2v (default)", "ref2va v2v (no turbo LoRA)"], {
+                    "default": "t2v / i2v (default)",
+                    "tooltip": "Set to ref2va v2v when doing a reference-driven "
+                               "video-to-video identity swap. Forces "
+                               "turbo_lora_strength to 0.0 regardless of the "
+                               "sidecar, because turbo LoRAs break that path."}),
             },
         }
 
@@ -302,7 +314,8 @@ class H3RecipeLoader:
 
     def load(self, unet_name, weight_dtype, auto_apply_recipe=True,
              steps=None, sampler=None, scheduler=None, shift_video=None,
-             shift_audio=None, turbo_lora_strength=1.0):
+             shift_audio=None, turbo_lora_strength=1.0,
+             task="t2v / i2v (default)"):
         import torch
 
         recipe, lines, confident = _resolve(unet_name)
@@ -344,6 +357,11 @@ class H3RecipeLoader:
 
         steps = int(recipe["steps"])
         use_turbo = bool(recipe["use_turbo_lora"])
+        is_v2v = task.startswith("ref2va v2v")
+        if is_v2v and use_turbo:
+            lines.append("  ref2va v2v selected -> turbo LoRA FORCED OFF "
+                         "(sidecar said use it; turbo breaks v2v swaps)")
+            use_turbo = False
         # Emitting 0.0 lets a LoraLoader stay wired but inert, so a distilled
         # checkpoint cannot accidentally get a turbo LoRA applied.
         out_strength = float(turbo_lora_strength) if use_turbo else 0.0

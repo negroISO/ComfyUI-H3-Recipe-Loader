@@ -117,6 +117,26 @@ before queueing anything.
 Widget values are the source of truth at execution time, with the sidecar as
 fallback — so API and headless runs work without supplying them.
 
+### ref2va V2V: turn the turbo LoRA OFF
+
+**A turbo LoRA breaks reference-driven video-to-video identity swaps.** Symptoms,
+all of which look like prompt or strength problems but are not:
+
+- the reference rendered as a slideshow intercut with the source video
+- the output cycling between the source person and the reference person
+- no identity transfer at all — you just get the source person back
+
+Set the **`task`** widget to `ref2va v2v (no turbo LoRA)` and the node forces
+`turbo_lora_strength` to 0.0 regardless of what the sidecar says. The sidecar's
+`use_turbo_lora` is about *step count*, so it cannot know which task you are
+running — that is what this switch is for.
+
+Working V2V recipe: **20 steps, no turbo LoRA, Spectrum on, SageAttention**,
+plus a structured prompt that separates identity from motion
+(`subject_definitions` / `retention_analysis` / `detailed_description` sections,
+with the source video marked `partially_preserved` and the reference subject
+`fully_preserved`).
+
 **H3 Recipe Info (read-only)** — same report without loading weights. Use it to
 confirm a sidecar is being picked up.
 
