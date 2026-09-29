@@ -40,6 +40,7 @@ unchanged.
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import comfy.samplers
@@ -92,6 +93,37 @@ DEFAULTS = {
 # must not get a turbo LoRA stacked on it.
 _DISTILLED_TOKENS = ("turbo", "distill", "lightning", "lcm", "step4", "4step",
                      "8step", "step8")
+
+
+def _detect_architecture(full_path: str):
+    """Is this actually a MiniMax H3 checkpoint? Returns (verdict, why).
+
+    verdict: "h3" | "other:<name>" | "unknown"
+
+    Loading a non-H3 model into an H3 graph fails deep in the sampler with an
+    opaque shape error (e.g. Krea2 wants a 4D image latent, H3 supplies a 5D
+    video latent -> "not enough values to unpack (expected 4, got 3)"). Catch
+    it at load time instead, where we can name the real problem.
+    """
+    try:
+        from safetensors import safe_open
+        with safe_open(full_path, framework="pt") as fh:
+            header = fh.metadata() or {}
+            arch = str(header.get("modelspec.architecture", "")).lower()
+            if arch:
+                if "minimax" in arch or "h3" in arch:
+                    return "h3", "header architecture=%s" % arch
+                return "other:%s" % arch, "header architecture=%s" % arch
+            # No architecture tag: fall back to H3's distinctive tensors.
+            keys = list(fh.keys())
+    except Exception as exc:
+        return "unknown", "could not read (%s)" % type(exc).__name__
+
+    markers = sum(1 for k in keys
+                  if "adaln_proj" in k or "token_refiner" in k)
+    if markers:
+        return "h3", "%d H3 marker tensors" % markers
+    return "unknown", "no H3 marker tensors among %d keys" % len(keys)
 
 
 def _sidecar_path(full_path: str) -> str:
@@ -152,6 +184,15 @@ def _resolve(unet_name: str):
     data, status = _read_sidecar(full)
     lines = ["model   : %s" % unet_name]
 
+    arch, arch_why = _detect_architecture(full)
+    wrong_arch = arch.startswith("other:")
+    if wrong_arch:
+        lines.append("  *** NOT A MINIMAX H3 CHECKPOINT (%s) ***" % arch_why)
+        lines.append("  *** an H3 graph will fail in the sampler with a "
+                     "shape error ***")
+    elif arch == "unknown":
+        lines.append("  (architecture unverified: %s)" % arch_why)
+
     if data:
         used, ignored = [], []
         for key in DEFAULTS:
@@ -199,6 +240,12 @@ def _resolve(unet_name: str):
                      % os.path.basename(_sidecar_path(full)))
         confident = False
 
+    # Carried on the dict rather than the signature so existing callers and
+    # the HTTP route keep working unchanged.
+    recipe["_architecture"] = arch
+    recipe["_wrong_architecture"] = wrong_arch
+    if wrong_arch:
+        confident = False
     return recipe, lines, confident
 
 
@@ -313,7 +360,15 @@ class H3RecipeLoader:
             lines.append("notes   : %s" % recipe["notes"])
         if recipe.get("source"):
             lines.append("source  : %s" % recipe["source"])
-        if not confident:
+        if recipe.get("_wrong_architecture"):
+            # Loud, because the downstream failure is an opaque shape error
+            # far from the real cause.
+            logging.warning(
+                "[H3 Recipe Loader] %s is a %r model, not MiniMax H3. An H3 "
+                "graph will fail in the sampler (latent rank mismatch). Pick "
+                "an H3 checkpoint.",
+                unet_name, recipe.get("_architecture", "?").replace("other:", ""))
+        elif not confident:
             lines.append("CONFIDENCE: LOW - verify against the model card.")
 
         return (model, steps, recipe["sampler"], recipe["scheduler"],
@@ -381,6 +436,8 @@ try:
             "shift_audio": float(recipe["shift_audio"]),
             "use_turbo_lora": bool(recipe["use_turbo_lora"]),
             "distilled": bool(recipe.get("distilled", False)),
+            "wrong_architecture": bool(recipe.get("_wrong_architecture")),
+            "architecture": recipe.get("_architecture", "unknown"),
             "confident": bool(confident),
             "info": "\n".join(lines),
         })

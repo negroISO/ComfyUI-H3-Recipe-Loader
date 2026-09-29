@@ -60,6 +60,16 @@ async function applyRecipe(node, { force = false } = {}) {
     for (const key of SYNCED) setWidget(node, key, data[key]);
 
     node.__h3Info = data.info || "";
+
+    // Wrong architecture is the loudest failure: an H3 graph fed a Krea2/SDXL
+    // checkpoint dies deep in the sampler with an opaque shape error.
+    if (data.wrong_architecture) {
+        const kind = String(data.architecture || "").replace("other:", "");
+        setStatus(node, `NOT A MINIMAX H3 MODEL (${kind}) - graph will fail`,
+                  "error");
+        return;
+    }
+
     const turbo = data.use_turbo_lora
         ? "turbo LoRA: USE"
         : "turbo LoRA: NO (strength 0)";
