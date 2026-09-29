@@ -1,0 +1,12 @@
+{
+  "schema": "h3-recipe/1",
+  "distilled": false,
+  "use_turbo_lora": false,
+  "steps": 20,
+  "sampler": "res_multistep",
+  "scheduler": "simple",
+  "shift_video": 12.0,
+  "shift_audio": 3.0,
+  "notes": "Non-distilled hybrid. 20-25 steps, res_multistep/simple or euler/simple, shift video 10-12 / audio 3-5. Do NOT stack a turbo LoRA.",
+  "source": "model card"
+}
